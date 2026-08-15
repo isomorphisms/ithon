@@ -1,6 +1,7 @@
-# ithon
-python with assignment arrows
+# i-thon
 
+ithon  
+python with assignment arrows
 
 companion to ick, icky, grease, ir, idriç
 
