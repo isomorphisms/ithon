@@ -38,6 +38,9 @@ jobs:
           rsync -a --exclude=.git _upstream/ ./
           patch --dry-run -p1 < ithon-unicode-syntax.patch
           patch -p1 < ithon-unicode-syntax.patch
+          # assignment_operator is only a syntactic helper; leaving it typed
+          # makes pegen reject its use in a negative lookahead.
+          sed -i 's/^assignment_operator\[Token\*\]:$/assignment_operator:/' Grammar/python.gram
 
       - name: Configure
         shell: bash
@@ -70,7 +73,7 @@ jobs:
           set -euxo pipefail
 
           # Stage exactly the tracked CPython snapshot, except upstream CI
-          # workflows.  Ithon should not inherit CPython's CI fan-out merely
+          # workflows. Ithon should not inherit CPython's CI fan-out merely
           # because its source tree was copied.
           git -C _upstream ls-files -z > /tmp/upstream-files-all
           python3 - <<'PY'
