@@ -61,11 +61,24 @@ jobs:
           set -euxo pipefail
           make -j2
 
-      - name: Run syntax and parser regressions
+      - name: Run i-thon syntax tests
+        shell: bash
+        run: |
+          set -o pipefail
+          ./python -m test -v test_ithon_syntax 2>&1 | tee ithon-test-output.txt
+
+      - name: Preserve i-thon test failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ithon-test-output
+          path: ithon-test-output.txt
+
+      - name: Run CPython parser regressions
         shell: bash
         run: |
           set -euxo pipefail
-          ./python -m test -v test_ithon_syntax test_grammar test_syntax test_tokenize
+          ./python -m test -v test_grammar test_syntax test_tokenize
 
       - name: Commit tested source tree
         shell: bash
@@ -86,7 +99,7 @@ jobs:
 
           rm -rf _upstream
           rm -rf .github/workflows
-          rm -f ithon-unicode-syntax.patch
+          rm -f ithon-unicode-syntax.patch ithon-test-output.txt
 
           git add --pathspec-from-file=/tmp/upstream-files --pathspec-file-nul
           git add -- README.md Lib/test/test_ithon_syntax.py
