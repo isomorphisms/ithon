@@ -1,0 +1,99 @@
+name: bootstrap i-thon
+
+on:
+  push:
+    paths:
+      - .github/workflows/bootstrap-ithon.yml
+      - ithon-unicode-syntax.patch
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out i-thon
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Use Python for CPython regeneration
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Check out current CPython main snapshot
+        uses: actions/checkout@v4
+        with:
+          repository: python/cpython
+          ref: e3287f631f3c88ed80191aa222e7fc4ba91edd17
+          path: _upstream
+          fetch-depth: 1
+
+      - name: Import CPython source and apply i-thon syntax
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rsync -a --exclude=.git _upstream/ ./
+          git apply --check ithon-unicode-syntax.patch
+          git apply ithon-unicode-syntax.patch
+
+      - name: Configure
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ./configure --with-pydebug
+
+      - name: Regenerate token tables and PEG parser
+        shell: bash
+        run: |
+          set -euxo pipefail
+          make regen-token
+          make regen-pegen
+
+      - name: Build i-thon
+        shell: bash
+        run: |
+          set -euxo pipefail
+          make -j2
+
+      - name: Run syntax and parser regressions
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ./python -m test -v test_ithon_syntax test_grammar test_syntax test_tokenize
+
+      - name: Commit tested source tree
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          # Stage exactly the tracked CPython snapshot, except upstream CI
+          # workflows.  Ithon should not inherit CPython's CI fan-out merely
+          # because its source tree was copied.
+          git -C _upstream ls-files -z > /tmp/upstream-files-all
+          python3 - <<'PY'
+          from pathlib import Path
+
+          paths = Path('/tmp/upstream-files-all').read_bytes().split(b'\0')
+          kept = [p for p in paths if p and not p.startswith(b'.github/workflows/')]
+          Path('/tmp/upstream-files').write_bytes(b'\0'.join(kept) + b'\0')
+          PY
+
+          rm -rf _upstream
+          rm -rf .github/workflows
+          rm -f ithon-unicode-syntax.patch
+
+          git add --pathspec-from-file=/tmp/upstream-files --pathspec-file-nul
+          git add -- README.md Lib/test/test_ithon_syntax.py
+          git add -u -- ithon-unicode-syntax.patch .github/workflows/bootstrap-ithon.yml
+
+          git status --short
+          git diff --cached --check
+          git diff --cached --stat
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Import CPython main and add i-thon syntax'
+          git push origin HEAD:main
