@@ -36,8 +36,8 @@ jobs:
         run: |
           set -euxo pipefail
           rsync -a --exclude=.git _upstream/ ./
-          git apply --check ithon-unicode-syntax.patch
-          git apply ithon-unicode-syntax.patch
+          patch --dry-run -p1 < ithon-unicode-syntax.patch
+          patch -p1 < ithon-unicode-syntax.patch
 
       - name: Configure
         shell: bash
