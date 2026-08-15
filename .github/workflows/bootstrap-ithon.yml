@@ -38,9 +38,36 @@ jobs:
           rsync -a --exclude=.git _upstream/ ./
           patch --dry-run -p1 < ithon-unicode-syntax.patch
           patch -p1 < ithon-unicode-syntax.patch
+
           # assignment_operator is only a syntactic helper; leaving it typed
           # makes pegen reject its use in a negative lookahead.
           sed -i 's/^assignment_operator\[Token\*\]:$/assignment_operator:/' Grammar/python.gram
+
+          # CPython 3.16 lazily represents module annotations. Test that the
+          # arrow form preserves AnnAssign in the AST rather than assuming an
+          # eager __annotations__ dictionary exists after exec().
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('Lib/test/test_ithon_syntax.py')
+          text = path.read_text()
+          text = 'import ast\n' + text
+          old = '''    def test_annotated_left_assignment(self):
+                  ns = self.run_source("x: int ← 42")
+                  self.assertEqual(ns["x"], 42)
+                  self.assertIs(ns["__annotations__"]["x"], int)
+          '''
+          new = '''    def test_annotated_left_assignment(self):
+                  ns = self.run_source("x: int ← 42")
+                  self.assertEqual(ns["x"], 42)
+                  tree = ast.parse("x: int ← 42")
+                  self.assertIsInstance(tree.body[0], ast.AnnAssign)
+                  self.assertEqual(tree.body[0].target.id, "x")
+          '''
+          if old not in text:
+              raise SystemExit('annotated-assignment test block not found')
+          path.write_text(text.replace(old, new))
+          PY
 
       - name: Configure
         shell: bash
@@ -77,8 +104,15 @@ jobs:
       - name: Run CPython parser regressions
         shell: bash
         run: |
-          set -euxo pipefail
-          ./python -m test -v test_grammar test_syntax test_tokenize
+          set -o pipefail
+          ./python -m test -v test_grammar test_syntax test_tokenize 2>&1 | tee cpython-test-output.txt
+
+      - name: Preserve CPython regression failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpython-test-output
+          path: cpython-test-output.txt
 
       - name: Commit tested source tree
         shell: bash
@@ -99,7 +133,7 @@ jobs:
 
           rm -rf _upstream
           rm -rf .github/workflows
-          rm -f ithon-unicode-syntax.patch ithon-test-output.txt
+          rm -f ithon-unicode-syntax.patch ithon-test-output.txt cpython-test-output.txt
 
           git add --pathspec-from-file=/tmp/upstream-files --pathspec-file-nul
           git add -- README.md Lib/test/test_ithon_syntax.py
