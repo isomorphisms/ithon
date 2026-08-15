@@ -117,13 +117,15 @@ jobs:
       - name: Commit tested source tree
         shell: bash
         run: |
-          set -euxo pipefail
+          set -o pipefail
+          {
+            set -euxo pipefail
 
-          # Stage exactly the tracked CPython snapshot, except upstream CI
-          # workflows. Ithon should not inherit CPython's CI fan-out merely
-          # because its source tree was copied.
-          git -C _upstream ls-files -z > /tmp/upstream-files-all
-          python3 - <<'PY'
+            # Stage exactly the tracked CPython snapshot, except upstream CI
+            # workflows. Ithon should not inherit CPython's CI fan-out merely
+            # because its source tree was copied.
+            git -C _upstream ls-files -z > /tmp/upstream-files-all
+            python3 - <<'PY'
           from pathlib import Path
 
           paths = Path('/tmp/upstream-files-all').read_bytes().split(b'\0')
@@ -131,19 +133,38 @@ jobs:
           Path('/tmp/upstream-files').write_bytes(b'\0'.join(kept) + b'\0')
           PY
 
-          rm -rf _upstream
-          rm -rf .github/workflows
-          rm -f ithon-unicode-syntax.patch ithon-test-output.txt cpython-test-output.txt
+            rm -rf _upstream
+            rm -rf .github/workflows
+            rm -f ithon-unicode-syntax.patch ithon-test-output.txt cpython-test-output.txt
 
-          git add --pathspec-from-file=/tmp/upstream-files --pathspec-file-nul
-          git add -- README.md Lib/test/test_ithon_syntax.py
-          git add -u -- ithon-unicode-syntax.patch .github/workflows/bootstrap-ithon.yml
+            # These are explicit pathspecs obtained from CPython's own index.
+            # -f is required for upstream-tracked generated files that match
+            # CPython's own ignore rules when they are new to this repository.
+            git add -f --pathspec-from-file=/tmp/upstream-files --pathspec-file-nul
+            git add -- README.md Lib/test/test_ithon_syntax.py
+            git add -u -- ithon-unicode-syntax.patch .github/workflows/bootstrap-ithon.yml
 
-          git status --short
-          git diff --cached --check
-          git diff --cached --stat
+            git status --short
+            git diff --cached --check -- \
+              README.md \
+              Grammar/Tokens \
+              Grammar/python.gram \
+              Parser/lexer/lexer.c \
+              Tools/build/generate_token.py \
+              Tools/peg_generator/pegen/parser_generator.py \
+              Tools/peg_generator/pegen/c_generator.py \
+              Lib/test/test_ithon_syntax.py
+            git diff --cached --stat
 
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'Import CPython main and add i-thon syntax'
-          git push origin HEAD:main
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'Import CPython main and add i-thon syntax'
+            git push origin HEAD:main
+          } 2>&1 | tee import-commit-output.txt
+
+      - name: Preserve import failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: import-commit-output
+          path: import-commit-output.txt
