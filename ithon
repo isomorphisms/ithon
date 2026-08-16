@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PYTHON="$ROOT/python"
+if [ ! -x "$PYTHON" ]; then
+    echo "ithon: native build not found at $PYTHON; run the normal CPython build first" >&2
+    exit 127
+fi
+exec "$PYTHON" "$@"
