@@ -166,12 +166,24 @@ class Checker:
         raise AssertionError
 
     def check(self, tree: ast.Module) -> None:
-        # Declare function signatures before bodies so local calls have stable types.
+        # Declare top-level names before bodies so local calls and class annotations
+        # have stable types.
         for stmt in tree.body:
             if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 self._declare_function(stmt)
+            elif isinstance(stmt, ast.ClassDef):
+                self._declare_class(stmt)
         for stmt in tree.body:
             self.check_stmt(stmt)
+
+    def _declare_class(self, node: ast.ClassDef) -> IType:
+        instance_type = IType(node.name)
+        class_type = IType("type", (instance_type,))
+        existing = self.scope.get(node.name)
+        if existing is not None and existing != class_type:
+            self.error(node, f"'{node.name}' was already declared as {existing}")
+        self.scope[node.name] = class_type
+        return instance_type
 
     def _declare_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> IType:
         existing = self.scope.get(node.name)
@@ -196,6 +208,27 @@ class Checker:
         return typ
 
     def check_stmt(self, node: ast.stmt) -> None:
+        if isinstance(node, ast.ClassDef):
+            self._declare_class(node)
+            if node.keywords:
+                self.error(node, "typed class keywords and metaclasses are not implemented yet")
+            if node.decorator_list:
+                self.error(node, "typed class decorators are not implemented yet")
+            for base in node.bases:
+                base_type = self.infer(base)
+                if base_type.name not in {"external", "type"}:
+                    self.error(base, f"class base must be a type, got {base_type}")
+
+            self.scopes.append({})
+            try:
+                for stmt in node.body:
+                    if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        self._declare_function(stmt)
+                for stmt in node.body:
+                    self.check_stmt(stmt)
+            finally:
+                self.scopes.pop()
+            return
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             signature = self._declare_function(node)
             params, result = list(signature.args[:-1]), signature.args[-1]
@@ -299,6 +332,30 @@ class Checker:
                 if isinstance(node.op, ast.Add) and left == right and left in {STR, BYTES}:
                     return left
             self.error(node, f"operator is not statically defined for {left} and {right}")
+        if isinstance(node, ast.UnaryOp):
+            operand = self.infer(node.operand)
+            if isinstance(node.op, (ast.USub, ast.UAdd)) and operand in _NUMERIC_RANK:
+                return INT if operand == BOOL else operand
+            self.error(node, f"unary operator is not statically defined for {operand}")
+        if isinstance(node, ast.Compare):
+            operands = [node.left, *node.comparators]
+            operand_types = [self.infer(operand) for operand in operands]
+            for operator, left, right in zip(node.ops, operand_types, operand_types[1:]):
+                if UNKNOWN in {left, right}:
+                    self.error(node, "comparison operands need statically known types")
+                if isinstance(operator, (ast.Lt, ast.LtE, ast.Gt, ast.GtE)):
+                    if left in _NUMERIC_RANK and right in _NUMERIC_RANK:
+                        continue
+                elif isinstance(operator, (ast.Eq, ast.NotEq)):
+                    if is_assignable(left, right) or is_assignable(right, left):
+                        continue
+                self.error(node, f"comparison is not statically defined for {left} and {right}")
+            return BOOL
+        if isinstance(node, ast.IfExp):
+            self.require(self.infer(node.test), BOOL, node.test)
+            body = self.infer(node.body, expected)
+            otherwise = self.infer(node.orelse, expected)
+            return _union((body, otherwise))
         if isinstance(node, ast.List):
             if not node.elts:
                 if expected is not None and expected.name == "list" and expected.args:
