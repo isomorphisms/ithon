@@ -9,7 +9,7 @@ import sys
 import traceback
 from pathlib import Path
 
-from ithon_static import StaticTypeError, check_source
+from ithon_frontend import StaticTypeError, check_source
 
 
 class IthonSourceLoader(importlib.abc.SourceLoader):
@@ -24,10 +24,17 @@ class IthonSourceLoader(importlib.abc.SourceLoader):
         with open(path, "rb") as handle:
             return handle.read()
 
-    def source_to_code(self, data: bytes, path: str, *, _optimize: int = -1):
+    def source_to_code(
+        self,
+        data: bytes,
+        path: str,
+        fullname: str | None = None,
+        *,
+        _optimize: int = -1,
+    ):
         source = data.decode("utf-8")
-        check_source(source, path)
-        return compile(source, path, "exec", dont_inherit=True, optimize=_optimize)
+        tree = check_source(source, path)
+        return compile(tree, path, "exec", dont_inherit=True, optimize=_optimize)
 
 
 class IthonFinder(importlib.abc.MetaPathFinder):
@@ -61,8 +68,8 @@ def _install_importer() -> None:
 
 def _run_source(source: str, filename: str, argv: list[str]) -> None:
     # Check the complete module before executing any top-level statement.
-    check_source(source, filename)
-    code = compile(source, filename, "exec")
+    tree = check_source(source, filename)
+    code = compile(tree, filename, "exec")
     sys.argv = argv
     if filename not in {"<string>", "<stdin>"}:
         sys.path[0] = os.path.dirname(os.path.abspath(filename))
